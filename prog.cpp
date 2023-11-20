@@ -175,14 +175,24 @@ int main(int argc, char **argv)
                     Point pt2(x + bbloc, y + bbloc);
                     col_hists.push_back(getColorDistribution(img_input, pt1, pt2));
                 }
+            std::cout << "Histogrammes du fond calculés" << std::endl;
         }
         else if (c == 'a')
         {
             col_hists_object.push_back(getColorDistribution(img_input, pt1, pt2));
+            std::cout << "Histogramme de l'objet ajouté" << std::endl;
         }
         else if (c == 'r')
         {
+            std::cout << "Désactive le mode de reconnaissance";
+            if (((char)waitKey(50)) == 'r')
+            {
+                col_hists_object.clear();
+                col_hists.clear();
+                std::cout << " et efface les histogrammes";
+            }
             reco = !reco;
+            std::cout << std::endl;
         }
 
         Mat output = img_input;
