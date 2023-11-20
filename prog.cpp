@@ -89,9 +89,10 @@ float minDistance(const ColorDistribution &h,
 }
 
 //  fabrique une nouvelle image, où chaque bloc est coloré selon qu’il est “fond” ou “objet”.
+// Accepte un unique vecteur contenant la distribution de couleur du fond en 0 et de tout les autres objets sur le reste du vecteur.
+// Chaque object est coloré différemment en prenant les couleurs de la variable colors.
 Mat recoObject(Mat input,
-               const std::vector<ColorDistribution> &col_hists,
-               const std::vector<ColorDistribution> &col_hists_object,
+               const std::vector<std::vector<ColorDistribution>> &all_col_hists,
                const std::vector<Vec3b> &colors,
                const int bloc)
 {
@@ -102,12 +103,21 @@ Mat recoObject(Mat input,
             Point pt1(x, y);
             Point pt2(x + bloc, y + bloc);
             ColorDistribution cd = getColorDistribution(input, pt1, pt2);
-            float dist_background = minDistance(cd, col_hists);
-            float dist_object = minDistance(cd, col_hists_object);
-            if (dist_background < dist_object)
-                rectangle(img_seg, pt1, pt2, colors[0], FILLED);
-            else
-                rectangle(img_seg, pt1, pt2, colors[1], FILLED);
+            float min_dist = 1000000;
+            int min_dist_index = -1;
+            for (int i = 0; i < all_col_hists.size(); i++)
+            {
+                float dist = minDistance(cd, all_col_hists[i]);
+                if (dist < min_dist)
+                {
+                    min_dist = dist;
+                    min_dist_index = i;
+                }
+            }
+            if (min_dist_index == 0)
+                rectangle(img_seg, pt1, pt2, colors[0], -1);
+            else if (min_dist_index > 0)
+                rectangle(img_seg, pt1, pt2, colors[min_dist_index % colors.size()], -1);
         }
     return img_seg;
 }
@@ -123,7 +133,7 @@ int main(int argc, char **argv)
     pCap = new VideoCapture(0);
     if (!pCap->isOpened())
     {
-        cout << "Couldn't open image / camera ";
+        cout << "Couldn't open image / camera " << std::endl;
         return 1;
     }
     // Force une camera 640x480 (pas trop grande).
@@ -137,7 +147,8 @@ int main(int argc, char **argv)
     Point pt2(width / 2 + size / 2, height / 2 + size / 2);
     std::vector<ColorDistribution> col_hists;        // histogrammes du fond
     std::vector<ColorDistribution> col_hists_object; // histogrammes de l'objet
-    const std::vector<Vec3b> colors = {Vec3b(0, 0, 0), Vec3b(0, 0, 255)};
+    vector<vector<ColorDistribution>> all_col_hists; // histogrammes de tout les objets
+    const std::vector<Vec3b> colors = {Vec3b(0, 0, 0), Vec3b(0, 0, 255), Vec3b(0, 255, 0), Vec3b(255, 0, 0)};
 
     namedWindow("input", 1);
     imshow("input", img_input);
@@ -175,12 +186,34 @@ int main(int argc, char **argv)
                     Point pt2(x + bbloc, y + bbloc);
                     col_hists.push_back(getColorDistribution(img_input, pt1, pt2));
                 }
+            all_col_hists.push_back(col_hists);
             std::cout << "Histogrammes du fond calculés" << std::endl;
         }
         else if (c == 'a')
         {
+            if (col_hists.size() == 0)
+            {
+                std::cout << "Aucun histogramme du fond calculé ! Pressez 'b' d'abord" << std::endl;
+                continue;
+            }
             col_hists_object.push_back(getColorDistribution(img_input, pt1, pt2));
-            std::cout << "Histogramme de l'objet ajouté" << std::endl;
+            std::cout << "Histogramme de l'objet courant ajouté" << std::endl;
+        }
+        else if (c == 'o')
+        {
+            if (col_hists.size() == 0)
+            {
+                std::cout << "Aucun histogramme du fond calculé! Pressez 'b' d'abord" << std::endl;
+                continue;
+            }
+            if (col_hists_object.size() == 0)
+            {
+                std::cout << "Aucun histogramme à ajouter !" << std::endl;
+                continue;
+            }
+            all_col_hists.push_back(col_hists_object);
+            col_hists_object.clear();
+            std::cout << "Objet ajouté" << std::endl;
         }
         else if (c == 'r')
         {
@@ -189,6 +222,7 @@ int main(int argc, char **argv)
             {
                 col_hists_object.clear();
                 col_hists.clear();
+                all_col_hists.clear();
                 std::cout << " et efface les histogrammes";
             }
             reco = !reco;
@@ -200,7 +234,7 @@ int main(int argc, char **argv)
         { // mode reconnaissance
             Mat gray;
             cvtColor(img_input, gray, COLOR_BGR2GRAY);
-            Mat reco = recoObject(img_input, col_hists, col_hists_object, colors, 8);
+            Mat reco = recoObject(img_input, all_col_hists, colors, 8);
             cvtColor(gray, img_input, COLOR_GRAY2BGR);
             output = 0.5 * reco + 0.5 * img_input; // mélange reco + caméra
         }
