@@ -43,7 +43,7 @@ struct ColorDistribution
         for (int i = 0; i < HIST_SIZE; i++)
             for (int j = 0; j < HIST_SIZE; j++)
                 for (int k = 0; k < HIST_SIZE; k++)
-                    data[i][j][k] /= nb;
+                    data[i][j][k] /= static_cast<float>(nb);
     }
     // Retourne la distance chi-2 entre cet histogramme et l'histogramme other
     float distance(const ColorDistribution &other) const
@@ -54,8 +54,12 @@ struct ColorDistribution
         for (int i = 0; i < HIST_SIZE; i++)
             for (int j = 0; j < HIST_SIZE; j++)
                 for (int k = 0; k < HIST_SIZE; k++)
-                    // 1e-10 pour éviter la division par 0
-                    dist += pow(data[i][j][k] - other.data[i][j][k], 2) / (data[i][j][k] + other.data[i][j][k] + 1e-10);
+                {
+                    if (data[i][j][k] == 0 && other.data[i][j][k] == 0)
+                        continue;
+                    float denom = data[i][j][k] - other.data[i][j][k];
+                    dist += (denom * denom) / (data[i][j][k] + other.data[i][j][k]);
+                }
         return dist;
     }
 };
@@ -68,6 +72,44 @@ ColorDistribution getColorDistribution(Mat input, Point pt1, Point pt2)
             cd.add(input.at<Vec3b>(y, x));
     cd.finished();
     return cd;
+}
+
+// retourne la plus petite distance entre h et les histogrammes de couleurs de hists.
+float minDistance(const ColorDistribution &h,
+                  const std::vector<ColorDistribution> &hists)
+{
+    float min_dist = 1000000;
+    for (const ColorDistribution &h2 : hists)
+    {
+        float dist = h.distance(h2);
+        if (dist < min_dist)
+            min_dist = dist;
+    }
+    return min_dist;
+}
+
+//  fabrique une nouvelle image, où chaque bloc est coloré selon qu’il est “fond” ou “objet”.
+Mat recoObject(Mat input,
+               const std::vector<ColorDistribution> &col_hists,
+               const std::vector<ColorDistribution> &col_hists_object,
+               const std::vector<Vec3b> &colors,
+               const int bloc)
+{
+    Mat img_seg = Mat::zeros(input.size(), CV_8UC3);
+    for (int y = 0; y <= input.rows - bloc; y += bloc)
+        for (int x = 0; x <= input.cols - bloc; x += bloc)
+        {
+            Point pt1(x, y);
+            Point pt2(x + bloc, y + bloc);
+            ColorDistribution cd = getColorDistribution(input, pt1, pt2);
+            float dist_background = minDistance(cd, col_hists);
+            float dist_object = minDistance(cd, col_hists_object);
+            if (dist_background < dist_object)
+                rectangle(img_seg, pt1, pt2, colors[0], FILLED);
+            else
+                rectangle(img_seg, pt1, pt2, colors[1], FILLED);
+        }
+    return img_seg;
 }
 
 int main(int argc, char **argv)
@@ -90,14 +132,22 @@ int main(int argc, char **argv)
     (*pCap) >> img_input;
     if (img_input.empty())
         return 1; // probleme avec la camera
+
     Point pt1(width / 2 - size / 2, height / 2 - size / 2);
     Point pt2(width / 2 + size / 2, height / 2 + size / 2);
+    std::vector<ColorDistribution> col_hists;        // histogrammes du fond
+    std::vector<ColorDistribution> col_hists_object; // histogrammes de l'objet
+    const std::vector<Vec3b> colors = {Vec3b(0, 0, 0), Vec3b(0, 0, 255)};
+
     namedWindow("input", 1);
     imshow("input", img_input);
+
     bool freeze = false;
+    bool reco = false;
+
     while (true)
     {
-        char c = (char)waitKey(50); // attend 50ms -> 20 images/s
+        char c = (char)waitKey(20);
         if (pCap != nullptr && !freeze)
             (*pCap) >> img_input; // récupère l'image de la caméra
         if (c == 'q')             // permet de quitter l'application
@@ -115,8 +165,39 @@ int main(int argc, char **argv)
             float dist = cd_gh.distance(cd_dh);
             cout << "Distance : " << dist << endl;
         }
-        cv::rectangle(img_input, pt1, pt2, Scalar({255.0, 255.0, 255.0}), 1);
-        imshow("input", img_input); // affiche le flux video
+        else if (c == 'b')
+        {
+            const int bbloc = 128;
+            for (int y = 0; y <= height - bbloc; y += bbloc)
+                for (int x = 0; x <= width - bbloc; x += bbloc)
+                {
+                    Point pt1(x, y);
+                    Point pt2(x + bbloc, y + bbloc);
+                    col_hists.push_back(getColorDistribution(img_input, pt1, pt2));
+                }
+        }
+        else if (c == 'a')
+        {
+            col_hists_object.push_back(getColorDistribution(img_input, pt1, pt2));
+        }
+        else if (c == 'r')
+        {
+            reco = !reco;
+        }
+
+        Mat output = img_input;
+        if (reco)
+        { // mode reconnaissance
+            Mat gray;
+            cvtColor(img_input, gray, COLOR_BGR2GRAY);
+            Mat reco = recoObject(img_input, col_hists, col_hists_object, colors, 8);
+            cvtColor(gray, img_input, COLOR_GRAY2BGR);
+            output = 0.5 * reco + 0.5 * img_input; // mélange reco + caméra
+        }
+        else
+            cv::rectangle(output, pt1, pt2, Scalar({255.0, 255.0, 255.0}), 1);
+        cv::rectangle(output, pt1, pt2, Scalar({255.0, 255.0, 255.0}), 1);
+        imshow("input", output); // affiche le flux video
     }
     return 0;
 }
